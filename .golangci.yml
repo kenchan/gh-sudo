@@ -1,0 +1,24 @@
+version: "2"
+
+linters:
+  enable:
+    - errorlint
+    - gosec
+    - misspell
+    - unconvert
+  settings:
+    gosec:
+      excludes:
+        # Running gh with the user's arguments is the purpose of this tool.
+        - G204
+        # The lock path is built from os.UserCacheDir and a sanitized host name.
+        - G304
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters: [gosec]
+        text: G101
+
+formatters:
+  enable:
+    - gofmt
