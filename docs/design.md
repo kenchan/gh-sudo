@@ -21,9 +21,10 @@ benefit, as the experiments below show.
   removing it (T2) were all different, and all three still returned 200 for
   `GET /user` afterwards. T1 kept `admin:enterprise` in `X-OAuth-Scopes`.
   `refresh -r` only changes which token is stored in the local keyring.
-- **gh OAuth tokens (`gho_`) do not expire.** They are revoked automatically
-  after one year without use, or when more than ten tokens exist for the same
-  user/app/scope combination.
+- **gh OAuth tokens (`gho_`) do not expire** (documented). They are revoked
+  only after one year without use, when more than ten tokens exist for the
+  same user/app/scope combination (oldest first), or when the authorization is
+  revoked.
   ([token expiration](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/token-expiration-and-revocation),
   [authorizing OAuth apps](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps))
 - **`POST /credentials/revoke` cannot revoke a single `gho_` token.**

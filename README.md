@@ -22,9 +22,7 @@ gh auth refresh -r admin:enterprise   # browser approval again
 ```
 
 That is two browser round trips, and it is easy to forget the second one and keep working with the strong token. Worse,
-the second step does not do what it looks like: `gh auth refresh` issues a new token every time and does **not**
-revoke the old one, so the elevated token stays valid on GitHub either way. Removing the scope only changes which token
-your keyring holds.
+the second step does not do what it looks like; see [Important facts](#important-facts).
 
 `gh sudo` does the same thing with one approval and no cleanup to forget:
 
@@ -34,6 +32,33 @@ your keyring holds.
 3. runs your command, and
 4. writes the original token back with `gh auth login --with-token` and verifies it, also when the command fails, on
    Ctrl-C, `SIGTERM` or `SIGHUP`, and on a panic.
+
+## Important facts
+
+These are easy to get wrong and they shape what `gh sudo` can and cannot do. Each item says whether it is documented by
+GitHub or was observed in our own experiment (gh 2.104.0, github.com, 2026-11-18). The experiment is described in more
+detail in the [design doc](docs/design.md#11-observed-facts-gh-21040-2026-11-18).
+
+1. **`gh auth refresh` issues a new token every time and does not revoke the old one** (observed).
+   This holds both when adding scopes with `-s` and when removing them with `-r`. In the experiment, after removing
+   `admin:enterprise` with `-r`, the token that had `admin:enterprise` still returned 200 for `GET /user` and still
+   listed the scope in `X-OAuth-Scopes`. `-r` only changes which token your local keyring holds.
+2. **gh's OAuth tokens (`gho_`) do not expire** (documented). They are revoked only when
+   - they have not been used for one year,
+   - more than ten tokens exist for the same user, app and scope combination (the oldest are revoked first), or
+   - the authorization is revoked.
+
+   Sources: [Token expiration and revocation](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/token-expiration-and-revocation),
+   [Authorizing OAuth apps](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps)
+3. **Submitting a single `gho_` token to
+   [`POST /credentials/revoke`](https://docs.github.com/en/rest/credentials/revoke) revokes the whole GitHub CLI OAuth
+   authorization** (observed; not documented). Not only the submitted token but also the token you use every day stopped
+   working, and `gh auth login` was needed again. The notification email listed the scopes accumulated by the
+   authorization, not just those of the submitted token.
+4. **Therefore `gh sudo` removes the elevated token from your machine, but not from GitHub**, just like
+   `gh auth refresh -r`. If you need it gone on GitHub for certain, revoke GitHub CLI under GitHub Settings →
+   Applications → Authorized OAuth Apps, then run `gh auth login` again. This also revokes every other gh token for that
+   account.
 
 ## Install
 
@@ -67,10 +92,8 @@ Everything after `--` is passed to gh unchanged. The exit status is the exit sta
 
 ## Limitations
 
-- **The elevated token stays valid on GitHub.** `gh sudo` only changes your local keyring, exactly like
-  `gh auth refresh -r`. GitHub's OAuth tokens for gh do not expire; unused tokens are revoked after one year, and only
-  the ten newest tokens per user/app/scope combination are kept. Do **not** try to revoke it with
-  `POST /credentials/revoke`: that revokes the whole GitHub CLI authorization, including the token you use every day.
+- **The elevated token stays valid on GitHub** (see [Important facts](#important-facts)). Do **not** try to revoke it
+  with `POST /credentials/revoke`.
 - **Other processes see the elevated token while the command runs.** Any gh invoked on the same machine during that
   time (for example by another terminal or an agent) uses it.
 - **The GitHub CLI authorization keeps the added scope**, so a later `gh auth refresh` may carry it forward.
