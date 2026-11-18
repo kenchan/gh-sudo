@@ -8,16 +8,11 @@ import (
 	"os/exec"
 )
 
-// GH runs gh. Tokens are passed only through stdin and read only from stdout, never through argv.
 type GH interface {
-	// Output runs gh non-interactively, writes stdin to it and returns its stdout. Its stderr goes to the user.
 	Output(ctx context.Context, stdin []byte, args ...string) ([]byte, error)
-	// Interactive runs gh attached to the terminal with env added to the environment and returns its exit code.
-	// Signals received on forward are delivered to the child while it runs.
 	Interactive(ctx context.Context, forward <-chan os.Signal, env []string, args ...string) (int, error)
 }
 
-// ExecGH runs the gh executable at Path.
 type ExecGH struct {
 	Path string
 }
@@ -61,7 +56,6 @@ func (g ExecGH) Interactive(ctx context.Context, forward <-chan os.Signal, env [
 		if code := exitErr.ExitCode(); code >= 0 {
 			return code, nil
 		}
-		// Killed by a signal; ExitCode reports -1.
 		return 1, nil
 	}
 	if err != nil {

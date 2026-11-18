@@ -10,8 +10,6 @@ import (
 
 var errLocked = errors.New("locked")
 
-// LockHost takes an exclusive, non-blocking lock for host. The lock is released when the returned function is called
-// or the process exits. The lock file holds no secret.
 func LockHost(host string) (func(), error) {
 	dir, err := os.UserCacheDir()
 	if err != nil {

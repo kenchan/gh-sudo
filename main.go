@@ -1,4 +1,3 @@
-// Command gh-sudo is a gh extension that runs one gh command with temporarily elevated OAuth scopes.
 package main
 
 import (
@@ -18,9 +17,9 @@ func main() {
 	os.Exit(run())
 }
 
-// run owns every deferred action so that os.Exit in main never skips the restore.
+// Not in main: os.Exit skips deferred calls, so the restore must live in a function that returns first.
 func run() int {
-	// Catch signals before anything else so that none can kill the process between saving and restoring the token.
+	// Not later: a signal arriving before Notify would kill the process between saving and restoring the token.
 	signals := make(chan os.Signal, 4)
 	signal.Notify(signals, sudo.CaughtSignals...)
 	defer signal.Stop(signals)

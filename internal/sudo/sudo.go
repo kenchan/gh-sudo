@@ -1,4 +1,3 @@
-// Package sudo runs one gh command with temporarily elevated OAuth scopes and always restores the original token.
 package sudo
 
 import (
@@ -16,10 +15,8 @@ import (
 	"time"
 )
 
-// TokenEnvVars are the environment variables that make gh ignore the keyring.
 var TokenEnvVars = []string{"GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"}
 
-// Options describe one gh sudo invocation.
 type Options struct {
 	Scopes    []string
 	Host      string
@@ -28,16 +25,13 @@ type Options struct {
 	Args      []string
 }
 
-// Runner holds the dependencies of Run so that tests can replace them.
 type Runner struct {
-	GH     GH
-	Stderr io.Writer
-	// Signals delivers the signals the process caught. Run never returns before restoring because of a signal.
-	Signals <-chan os.Signal
-	Lookenv func(string) (string, bool)
-	Lock    func(host string) (func(), error)
-	Sleep   func(time.Duration)
-	// RestoreAttempts is the number of times the restore is tried. It needs the network.
+	GH              GH
+	Stderr          io.Writer
+	Signals         <-chan os.Signal
+	Lookenv         func(string) (string, bool)
+	Lock            func(host string) (func(), error)
+	Sleep           func(time.Duration)
 	RestoreAttempts int
 }
 
@@ -54,7 +48,6 @@ type authStatus struct {
 	Hosts map[string][]account `json:"hosts"`
 }
 
-// Run runs the command and returns the process exit code.
 func (r *Runner) Run(opts Options) (code int) {
 	ctx := context.Background()
 
@@ -90,7 +83,7 @@ func (r *Runner) Run(opts Options) (code int) {
 			select {
 			case sig := <-r.Signals:
 				interrupted.Store(true)
-				// A SIGINT from the terminal already reaches the child through the process group.
+				// Not forwarding SIGINT: the terminal already delivers it to the child through the process group.
 				if sig != os.Interrupt {
 					select {
 					case forward <- sig:
@@ -129,8 +122,8 @@ func (r *Runner) Run(opts Options) (code int) {
 	}
 
 	if missing := missingScopes(acct.Scopes, opts.Scopes); len(missing) == 0 {
-		// Refreshing anyway would mint another token with the same scopes as the original, and GitHub keeps only the
-		// ten newest tokens per user, app and scope set, so repeated runs could get the original token revoked.
+		// Not refreshing anyway: it would mint another token with the same scopes as the original, and GitHub keeps only
+		// the ten newest tokens per user, app and scope set, so repeated runs could get the original token revoked.
 		r.infof("%s on %s already has scopes %s; running the command without refreshing", user, opts.Host, strings.Join(opts.Scopes, ","))
 		cmdCode, err := r.GH.Interactive(ctx, forward, nil, opts.Args...)
 		if err != nil {
@@ -146,7 +139,7 @@ func (r *Runner) Run(opts Options) (code int) {
 	if opts.Clipboard {
 		refreshArgs = append(refreshArgs, "--clipboard")
 	}
-	// Without a prompt, gh does not offer to store the new token in a non-gh git credential helper (such as
+	// Not letting gh prompt: it would offer to store the new token in a non-gh git credential helper (such as
 	// osxkeychain), where the restore could not remove it. The device flow still works; gh prints the URL to open.
 	refreshCode, err := r.GH.Interactive(ctx, forward, []string{"GH_PROMPT_DISABLED=1"}, refreshArgs...)
 	if err != nil {
@@ -196,7 +189,6 @@ func (r *Runner) preflight(opts Options) error {
 	if len(opts.Args) == 0 {
 		return errors.New("no gh command given; put it after --")
 	}
-	// The wrapped command must not change the credentials that gh sudo restores.
 	if opts.Args[0] == "auth" {
 		return errors.New("gh sudo cannot wrap gh auth commands")
 	}
@@ -248,7 +240,6 @@ func (r *Runner) token(ctx context.Context, host, user string) (secret, error) {
 	return t, nil
 }
 
-// restored reports whether the keyring holds original for user and user is the active account.
 func (r *Runner) restored(ctx context.Context, host, user string, original secret) (bool, error) {
 	current, err := r.token(ctx, host, user)
 	if err != nil {
@@ -265,7 +256,7 @@ func (r *Runner) restored(ctx context.Context, host, user string, original secre
 }
 
 func (r *Runner) restore(host, user string, original secret) error {
-	// A fresh context: whatever cancelled the command must not cancel the restore.
+	// Not the caller's context: whatever cancelled the command must not also cancel the restore.
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
@@ -323,5 +314,4 @@ func (r *Runner) errorf(format string, a ...any) {
 	_, _ = fmt.Fprintf(r.Stderr, "gh sudo: error: "+format+"\n", a...)
 }
 
-// CaughtSignals are the signals Run catches so that it can restore before exiting.
 var CaughtSignals = []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGHUP}

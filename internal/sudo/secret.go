@@ -5,8 +5,6 @@ import (
 	"fmt"
 )
 
-// secret holds a token. Its formatting methods redact the value so that it cannot leak through fmt, logs or panic
-// messages; the value is only reachable through reveal.
 type secret struct {
 	value string
 }

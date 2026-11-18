@@ -24,36 +24,34 @@ const (
 	otherToken = "gho_OTHER_SECRET_TOKEN"
 )
 
-// fakeGH models the parts of gh that gh sudo relies on: per-user keyring slots, the active account, refresh and
-// login --with-token.
 type fakeGH struct {
 	mu          sync.Mutex
 	tokens      map[string]string
-	owners      map[string]string // token -> user, as GET /user would answer
+	tokenOwner  map[string]string
 	active      string
 	source      string
 	refreshable bool
 
 	refreshCode   int
 	refreshErr    error
-	loginFailures int // number of login --with-token calls that fail before one succeeds
+	loginFailures int
 	loginIgnores  bool
 	command       func(ctx context.Context, forward <-chan os.Signal, args []string) (int, error)
 
-	scopes      string
-	refreshEnv  []string
-	calls       [][]string
-	stdins      [][]byte
-	commandSeen string // token in the keyring while the wrapped command ran
+	scopes             string
+	refreshEnv         []string
+	calls              [][]string
+	stdins             [][]byte
+	tokenSeenByCommand string
 }
 
 func newFakeGH() *fakeGH {
 	return &fakeGH{
-		tokens: map[string]string{user: origToken, otherUser: otherToken},
-		owners: map[string]string{origToken: user, elevToken: user, otherToken: otherUser},
-		active: user,
-		source: "keyring",
-		scopes: "gist, read:org, repo",
+		tokens:     map[string]string{user: origToken, otherUser: otherToken},
+		tokenOwner: map[string]string{origToken: user, elevToken: user, otherToken: otherUser},
+		active:     user,
+		source:     "keyring",
+		scopes:     "gist, read:org, repo",
 	}
 }
 
@@ -88,7 +86,7 @@ func (f *fakeGH) Output(_ context.Context, stdin []byte, args ...string) ([]byte
 			return nil, nil
 		}
 		tok := strings.TrimSpace(string(stdin))
-		u, ok := f.owners[tok]
+		u, ok := f.tokenOwner[tok]
 		if !ok {
 			return nil, errors.New("bad token")
 		}
@@ -111,7 +109,7 @@ func (f *fakeGH) Interactive(ctx context.Context, forward <-chan os.Signal, env 
 		f.tokens[f.active] = elevToken
 		return 0, nil
 	}
-	f.commandSeen = f.tokens[f.active]
+	f.tokenSeenByCommand = f.tokens[f.active]
 	cmd := f.command
 	f.mu.Unlock()
 	if cmd == nil {
@@ -209,8 +207,8 @@ func TestRunElevatesAndRestores(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d, stderr: %s", code, h.stderr)
 	}
-	if h.gh.commandSeen != elevToken {
-		t.Errorf("command ran with %q, want the elevated token", h.gh.commandSeen)
+	if h.gh.tokenSeenByCommand != elevToken {
+		t.Errorf("command ran with %q, want the elevated token", h.gh.tokenSeenByCommand)
 	}
 	h.gh.assertRestored(t)
 	h.gh.assertNoTokenInArgv(t)
@@ -246,7 +244,7 @@ func TestRunSkipsRefreshWhenScopesArePresent(t *testing.T) {
 	if slices.ContainsFunc(h.gh.calls, func(c []string) bool { return len(c) > 1 && c[1] == "refresh" }) {
 		t.Error("refresh ran although all scopes were present")
 	}
-	if h.gh.commandSeen != origToken {
+	if h.gh.tokenSeenByCommand != origToken {
 		t.Error("command did not run with the original token")
 	}
 	if n := h.gh.loginCalls(); n != 0 {
@@ -305,7 +303,6 @@ func TestRunRestoresWhenRefreshFails(t *testing.T) {
 			if slices.ContainsFunc(h.gh.calls, func(c []string) bool { return c[0] == "api" }) {
 				t.Error("command ran although refresh failed")
 			}
-			// The keyring still holds the original token, so nothing needs to be written.
 			if n := h.gh.loginCalls(); n != 0 {
 				t.Errorf("login was called %d times, want 0", n)
 			}
@@ -337,7 +334,6 @@ func TestRunRestoresOnSignalDuringCommand(t *testing.T) {
 			h.gh.command = func(_ context.Context, forward <-chan os.Signal, _ []string) (int, error) {
 				h.signals <- sig
 				if sig == os.Interrupt {
-					// The terminal delivers SIGINT to the child directly; nothing is forwarded.
 					select {
 					case s := <-forward:
 						t.Errorf("SIGINT was forwarded as %v", s)
@@ -382,7 +378,6 @@ func TestRunStopsBeforeCommandWhenInterruptedDuringRefresh(t *testing.T) {
 	h.gh.assertRestored(t)
 }
 
-// interruptingRefresh delivers SIGINT while the refresh runs, after the keyring already holds the elevated token.
 type interruptingRefresh struct {
 	*fakeGH
 	signals chan os.Signal

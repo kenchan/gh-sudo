@@ -9,7 +9,6 @@ import (
 	"strings"
 )
 
-// ErrHelp is returned by ParseArgs when help was requested.
 var ErrHelp = flag.ErrHelp
 
 const usage = `Run one gh command with temporarily elevated OAuth scopes.
@@ -38,7 +37,6 @@ EXAMPLES
 
 var scopePattern = regexp.MustCompile(`^[a-z][a-z_:]*$`)
 
-// ParseArgs parses the arguments after "gh sudo". defaultHost is used when --hostname is not given.
 func ParseArgs(args []string, defaultHost string, out io.Writer) (Options, error) {
 	fs := flag.NewFlagSet("gh sudo", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
