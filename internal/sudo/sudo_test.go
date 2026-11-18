@@ -40,6 +40,8 @@ type fakeGH struct {
 	loginIgnores  bool
 	command       func(ctx context.Context, forward <-chan os.Signal, args []string) (int, error)
 
+	scopes      string
+	refreshEnv  []string
 	calls       [][]string
 	stdins      [][]byte
 	commandSeen string // token in the keyring while the wrapped command ran
@@ -51,6 +53,7 @@ func newFakeGH() *fakeGH {
 		owners: map[string]string{origToken: user, elevToken: user, otherToken: otherUser},
 		active: user,
 		source: "keyring",
+		scopes: "gist, read:org, repo",
 	}
 }
 
@@ -67,7 +70,7 @@ func (f *fakeGH) Output(_ context.Context, stdin []byte, args ...string) ([]byte
 	case slices.Equal(args[:2], []string{"auth", "status"}):
 		var accts []account
 		for _, u := range []string{user, otherUser} {
-			accts = append(accts, account{State: "success", Active: f.active == u, Login: u, TokenSource: f.source, Refreshable: f.refreshable && u == user})
+			accts = append(accts, account{State: "success", Active: f.active == u, Login: u, Scopes: f.scopes, TokenSource: f.source, Refreshable: f.refreshable && u == user})
 		}
 		return json.Marshal(authStatus{Hosts: map[string][]account{host: accts}})
 	case slices.Equal(args[:2], []string{"auth", "token"}):
@@ -96,10 +99,11 @@ func (f *fakeGH) Output(_ context.Context, stdin []byte, args ...string) ([]byte
 	return nil, fmt.Errorf("unexpected gh call %v", args)
 }
 
-func (f *fakeGH) Interactive(ctx context.Context, forward <-chan os.Signal, args ...string) (int, error) {
+func (f *fakeGH) Interactive(ctx context.Context, forward <-chan os.Signal, env []string, args ...string) (int, error) {
 	f.mu.Lock()
 	f.record(args, nil)
 	if slices.Equal(args[:2], []string{"auth", "refresh"}) {
+		f.refreshEnv = env
 		defer f.mu.Unlock()
 		if f.refreshErr != nil || f.refreshCode != 0 {
 			return f.refreshCode, f.refreshErr
@@ -218,6 +222,35 @@ func TestRunElevatesAndRestores(t *testing.T) {
 		return slices.Equal(c, []string{"auth", "refresh", "-h", host, "-s", "admin:org"})
 	}) {
 		t.Errorf("refresh was not called as expected: %v", h.gh.calls)
+	}
+}
+
+func TestRunRefreshesWithoutPrompts(t *testing.T) {
+	h := newHarness()
+	h.runner.Run(defaultOpts())
+
+	if !slices.Contains(h.gh.refreshEnv, "GH_PROMPT_DISABLED=1") {
+		t.Errorf("refresh env = %v, want GH_PROMPT_DISABLED=1", h.gh.refreshEnv)
+	}
+}
+
+func TestRunSkipsRefreshWhenScopesArePresent(t *testing.T) {
+	h := newHarness()
+	h.gh.scopes = "admin:org, gist, read:org, repo"
+	opts := defaultOpts()
+	opts.Scopes = []string{"admin:org", "repo"}
+
+	if code := h.runner.Run(opts); code != 0 {
+		t.Fatalf("exit code = %d, stderr: %s", code, h.stderr)
+	}
+	if slices.ContainsFunc(h.gh.calls, func(c []string) bool { return len(c) > 1 && c[1] == "refresh" }) {
+		t.Error("refresh ran although all scopes were present")
+	}
+	if h.gh.commandSeen != origToken {
+		t.Error("command did not run with the original token")
+	}
+	if n := h.gh.loginCalls(); n != 0 {
+		t.Errorf("login was called %d times, want 0", n)
 	}
 }
 
@@ -355,8 +388,8 @@ type interruptingRefresh struct {
 	signals chan os.Signal
 }
 
-func (g *interruptingRefresh) Interactive(ctx context.Context, forward <-chan os.Signal, args ...string) (int, error) {
-	code, err := g.fakeGH.Interactive(ctx, forward, args...)
+func (g *interruptingRefresh) Interactive(ctx context.Context, forward <-chan os.Signal, env []string, args ...string) (int, error) {
+	code, err := g.fakeGH.Interactive(ctx, forward, env, args...)
 	if args[1] == "refresh" {
 		g.signals <- os.Interrupt
 		time.Sleep(50 * time.Millisecond)

@@ -34,7 +34,8 @@ gh auth token | shasum -a 256 > /tmp/gh-sudo-before.sha256
 gh sudo -s read:user -- api -i user | grep -i '^x-oauth-scopes'
 ```
 
-Approve the device code in the browser with the **active** account.
+gh prints a one-time code and a URL (it does not open the browser). Open the URL and approve with the **active**
+account.
 
 Expected:
 
@@ -49,7 +50,8 @@ gh sudo -s read:user -- api user
 
 Press Ctrl-C while gh waits for the browser approval.
 
-Expected: `gh sudo` exits with a non-zero status and prints `restored the original token ...`. `api user` does not run.
+Expected: `api user` does not run, and `gh sudo` prints `restored the original token ...`. The shell prompt may come
+back before that line, because gh does not wait for extensions on Ctrl-C. Wait for the line before verifying.
 
 ## 3. Failing command
 
@@ -72,6 +74,8 @@ Expected:
 
 - `token restored`.
 - `gh auth status` shows the same active account, token source (`keyring`) and scopes as before.
+- `git config --get-all credential.https://github.com.helper` and `git config --global --get-all credential.helper`
+  are unchanged (gh sudo must not set up git credentials).
 
 ## Cleanup
 

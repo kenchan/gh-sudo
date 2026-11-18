@@ -29,7 +29,8 @@ your keyring holds.
 `gh sudo` does the same thing with one approval and no cleanup to forget:
 
 1. it saves your current token (in memory only),
-2. adds the scopes with `gh auth refresh` (one browser approval),
+2. adds the scopes with `gh auth refresh` (one browser approval; gh prints the URL and the one-time code, open the URL
+   yourself),
 3. runs your command, and
 4. writes the original token back with `gh auth login --with-token` and verifies it, also when the command fails, on
    Ctrl-C, `SIGTERM` or `SIGHUP`, and on a panic.
@@ -73,6 +74,9 @@ Everything after `--` is passed to gh unchanged. The exit status is the exit sta
 - **Other processes see the elevated token while the command runs.** Any gh invoked on the same machine during that
   time (for example by another terminal or an agent) uses it.
 - **The GitHub CLI authorization keeps the added scope**, so a later `gh auth refresh` may carry it forward.
+- **After Ctrl-C, wait for the `restored the original token` line.** gh does not wait for extensions on Ctrl-C, so
+  your shell prompt may come back while `gh sudo` is still restoring.
+- If the account already has every requested scope, `gh sudo` runs the command without refreshing.
 - `SIGKILL` and power loss cannot be handled. If `gh sudo` ever reports that it failed to restore the token, run
   `gh auth login -h <host>`.
 

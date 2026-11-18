@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -42,6 +43,7 @@ type Runner struct {
 
 type account struct {
 	State       string `json:"state"`
+	Scopes      string `json:"scopes"`
 	Active      bool   `json:"active"`
 	Login       string `json:"login"`
 	TokenSource string `json:"tokenSource"`
@@ -126,13 +128,27 @@ func (r *Runner) Run(opts Options) (code int) {
 		return 130
 	}
 
+	if missing := missingScopes(acct.Scopes, opts.Scopes); len(missing) == 0 {
+		// Refreshing anyway would mint another token with the same scopes as the original, and GitHub keeps only the
+		// ten newest tokens per user, app and scope set, so repeated runs could get the original token revoked.
+		r.infof("%s on %s already has scopes %s; running the command without refreshing", user, opts.Host, strings.Join(opts.Scopes, ","))
+		cmdCode, err := r.GH.Interactive(ctx, forward, nil, opts.Args...)
+		if err != nil {
+			r.errorf("could not run gh: %v", err)
+			return 1
+		}
+		return cmdCode
+	}
+
 	scopes := strings.Join(opts.Scopes, ",")
 	r.infof("adding scopes %s to %s on %s for one command", scopes, user, opts.Host)
 	refreshArgs := []string{"auth", "refresh", "-h", opts.Host, "-s", scopes}
 	if opts.Clipboard {
 		refreshArgs = append(refreshArgs, "--clipboard")
 	}
-	refreshCode, err := r.GH.Interactive(ctx, forward, refreshArgs...)
+	// Without a prompt, gh does not offer to store the new token in a non-gh git credential helper (such as
+	// osxkeychain), where the restore could not remove it. The device flow still works; gh prints the URL to open.
+	refreshCode, err := r.GH.Interactive(ctx, forward, []string{"GH_PROMPT_DISABLED=1"}, refreshArgs...)
 	if err != nil {
 		r.errorf("gh auth refresh failed: %v", err)
 		return 1
@@ -146,12 +162,26 @@ func (r *Runner) Run(opts Options) (code int) {
 		return 130
 	}
 
-	cmdCode, err := r.GH.Interactive(ctx, forward, opts.Args...)
+	cmdCode, err := r.GH.Interactive(ctx, forward, nil, opts.Args...)
 	if err != nil {
 		r.errorf("could not run gh: %v", err)
 		return 1
 	}
 	return cmdCode
+}
+
+func missingScopes(have string, want []string) []string {
+	var current []string
+	for s := range strings.SplitSeq(have, ",") {
+		current = append(current, strings.TrimSpace(s))
+	}
+	var missing []string
+	for _, s := range want {
+		if !slices.Contains(current, s) {
+			missing = append(missing, s)
+		}
+	}
+	return missing
 }
 
 func (r *Runner) preflight(opts Options) error {

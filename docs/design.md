@@ -53,6 +53,12 @@ benefit, as the experiments below show.
 - `gh auth login --with-token` removes any refreshable (expiring) credential
   of that user. Writing back an expiring token this way would lose its
   refresh token.
+- When it can prompt, `gh auth refresh` asks "Authenticate Git with your GitHub credentials?" if the git credential
+  helper is not gh itself, and on "yes" hands the new token to that helper with `git credential approve` (for example
+  storing it in osxkeychain). With `GH_PROMPT_DISABLED` set, it skips that step; the device flow still works, but gh
+  prints the URL instead of opening the browser.
+- When gh runs an extension it does not catch `SIGINT`, so on Ctrl-C the outer `gh` exits at once while the
+  extension keeps running.
 - `gh auth status --json hosts --no-refresh` reports, per account, `active`,
   `login`, `tokenSource` and `refreshable`, without printing the token.
 
@@ -106,12 +112,18 @@ exit status of the wrapped command (see 5.5 for restore failures).
 3. **Take a lock** for the host (see 5.4).
 4. **Save T0** with `gh auth token -h H -u U --no-refresh`, kept only in
    memory. From this point on, the restore is armed.
-5. **Elevate** with `gh auth refresh -h H -s SCOPES`. The user approves once
-   in the browser. The keyring now holds T1.
-6. **Run** `gh <args>` with the terminal attached. It reads T1 from the
+5. **Skip the elevation** if the account already has every requested scope.
+   Refreshing anyway would mint another token with the same scope set as T0,
+   and GitHub keeps only the ten newest tokens per user/app/scope set, so
+   repeated runs could get T0 revoked.
+6. **Elevate** with `GH_PROMPT_DISABLED=1 gh auth refresh -h H -s SCOPES`.
+   The user approves once in the browser. The keyring now holds T1. Prompts
+   are disabled so that gh does not copy T1 into a non-gh git credential
+   helper, where the restore could not remove it (1.2).
+7. **Run** `gh <args>` with the terminal attached. It reads T1 from the
    keyring.
-7. **Restore** (always, see 5.2).
-8. **Verify** that `gh auth token -h H -u U --no-refresh` equals T0 and that
+8. **Restore** (always, see 5.2).
+9. **Verify** that `gh auth token -h H -u U --no-refresh` equals T0 and that
    U is still the active account.
 
 ### 5.2 Restore guarantees
@@ -134,6 +146,9 @@ exit status of the wrapped command (see 5.5 for restore failures).
 - `main` calls `os.Exit(run())`, and `run` owns all deferred work, so
   `os.Exit` never skips the restore.
 - `SIGKILL` and power loss cannot be handled. The recovery steps in 5.5 apply.
+- When run as `gh sudo`, Ctrl-C ends the outer `gh` immediately (1.2), so the
+  shell prompt may return before the restore finishes. The restore still
+  completes and prints a final line to stderr.
 
 ### 5.3 Why only the active account
 

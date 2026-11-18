@@ -12,9 +12,9 @@ import (
 type GH interface {
 	// Output runs gh non-interactively, writes stdin to it and returns its stdout. Its stderr goes to the user.
 	Output(ctx context.Context, stdin []byte, args ...string) ([]byte, error)
-	// Interactive runs gh attached to the terminal and returns its exit code. Signals received on forward are
-	// delivered to the child while it runs.
-	Interactive(ctx context.Context, forward <-chan os.Signal, args ...string) (int, error)
+	// Interactive runs gh attached to the terminal with env added to the environment and returns its exit code.
+	// Signals received on forward are delivered to the child while it runs.
+	Interactive(ctx context.Context, forward <-chan os.Signal, env []string, args ...string) (int, error)
 }
 
 // ExecGH runs the gh executable at Path.
@@ -32,8 +32,9 @@ func (g ExecGH) Output(ctx context.Context, stdin []byte, args ...string) ([]byt
 	return stdout.Bytes(), err
 }
 
-func (g ExecGH) Interactive(ctx context.Context, forward <-chan os.Signal, args ...string) (int, error) {
+func (g ExecGH) Interactive(ctx context.Context, forward <-chan os.Signal, env []string, args ...string) (int, error) {
 	cmd := exec.CommandContext(ctx, g.Path, args...)
+	cmd.Env = append(os.Environ(), env...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
