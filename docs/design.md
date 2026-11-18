@@ -105,27 +105,31 @@ exit status of the wrapped command (see 5.5 for restore failures).
    or `GITHUB_ENTERPRISE_TOKEN` is set: gh would use the environment value
    instead of the keyring, so neither the refresh nor the restore would do
    what we expect.
-2. **Inspect the account** with `gh auth status --json hosts -h H --no-refresh`.
+2. **Take a lock** for the host (see 5.4), before looking at the account, so
+   that a still-running `gh sudo` cannot show its elevated scopes.
+3. **Inspect the account** with `gh auth status --json hosts -h H --no-refresh`.
    Fail unless the active account
    - matches `--user` (when given),
    - has `tokenSource` `keyring`, and
    - is not `refreshable`.
-3. **Take a lock** for the host (see 5.4).
 4. **Save T0** with `gh auth token -h H -u U --no-refresh`, kept only in
    memory. From this point on, the restore is armed.
-5. **Skip the elevation** if the account already has every requested scope.
-   Refreshing anyway would mint another token with the same scope set as T0,
-   and GitHub keeps only the ten newest tokens per user/app/scope set, so
-   repeated runs could get T0 revoked.
-6. **Elevate** with `GH_PROMPT_DISABLED=1 gh auth refresh -h H -s SCOPES`.
+5. **Skip the elevation** if the account already has every requested scope,
+   counting implied scopes (for example `user` implies `read:user`, and
+   `admin:org` implies `read:org`). Refreshing anyway would mint another
+   token with the same scope set as T0, and GitHub keeps only the ten newest
+   tokens per user/app/scope set, so repeated runs could get T0 revoked.
+6. **Elevate** with `GH_PROMPT_DISABLED=1 GH_DEBUG=false gh auth refresh -h H -s SCOPES`.
    The user approves once in the browser. The keyring now holds T1. Prompts
    are disabled so that gh does not copy T1 into a non-gh git credential
    helper, where the restore could not remove it (1.2).
-7. **Run** `gh <args>` with the terminal attached. It reads T1 from the
-   keyring.
+7. **Run** `GH_HOST=H gh <args>` with the terminal attached. It reads T1 from
+   the keyring. `GH_HOST` makes the command default to the host that was
+   elevated.
 8. **Restore** (always, see 5.2).
-9. **Verify** that `gh auth token -h H -u U --no-refresh` equals T0 and that
-   U is still the active account.
+9. **Verify** that `gh auth token -h H -u U --no-refresh` equals T0, that U
+   is still the active account, and that the token source is still
+   `keyring`.
 
 ### 5.2 Restore guarantees
 
@@ -135,18 +139,23 @@ exit status of the wrapped command (see 5.5 for restore failures).
   This avoids a needless network round trip, for example when the refresh was
   cancelled before the browser approval.
 - Otherwise T0 is written back with `gh auth login -h H --with-token`, with
-  T0 on stdin. This needs the network, so it is retried a few times with
-  backoff.
-- The restore uses its own context, not the one that may have been cancelled,
-  so cancellation cannot kill the restore itself.
-- `SIGINT`, `SIGTERM` and `SIGHUP` are caught for the whole run. A second
-  Ctrl-C cannot interrupt the restore. `SIGTERM` and `SIGHUP` are forwarded to
-  the running child; `SIGINT` from a terminal already reaches the child
-  through the process group.
+  T0 on stdin. This needs the network, so the write and the verification are
+  retried together a few times with backoff, each attempt with its own
+  timeout.
+- The restore uses its own contexts, not the one that may have been
+  cancelled, so cancellation cannot kill the restore itself.
+- `SIGINT`, `SIGTERM` and `SIGHUP` are caught for the whole run and forwarded
+  to the running command or refresh. The gh processes that gh sudo runs
+  itself (status, token, login) run in their own process group, so a second
+  Ctrl-C from the terminal cannot kill the restore or its verification.
 - A panic is recovered, the restore runs, and the panic is re-raised.
 - `main` calls `os.Exit(run())`, and `run` owns all deferred work, so
   `os.Exit` never skips the restore.
 - `SIGKILL` and power loss cannot be handled. The recovery steps in 5.5 apply.
+- On Windows, gh sudo builds and its unit tests run, but signal forwarding
+  does not work (Go cannot send `SIGTERM` or `SIGHUP` to a process there), and
+  console close, logoff and shutdown give the process a deadline it cannot
+  extend. The guarantees above are verified on macOS and Linux only.
 - When run as `gh sudo`, Ctrl-C ends the outer `gh` immediately (1.2), so the
   shell prompt may return before the restore finishes. The restore still
   completes and prints a final line to stderr.
@@ -171,7 +180,11 @@ file lock per host in the user cache directory
 instance fails immediately.
 
 The lock does not protect against other tools running `gh auth refresh` or
-`gh auth login` at the same time.
+`gh auth login` at the same time. It also depends on the cache directory: on
+Linux, two runs with different `XDG_CACHE_HOME` values use different locks
+while sharing one keyring. This is accepted, because every location derived
+from the environment has the same weakness and a fixed path would not work
+for every user.
 
 ### 5.5 Restore failure
 
@@ -184,7 +197,8 @@ gh auth login -h <host>
 ```
 
 The exit status is the wrapped command's status if it was non-zero, and `1`
-otherwise, so a failed restore is never reported as success.
+otherwise, so a failed restore is never reported as success. A command killed
+by a signal exits with `128 + signal`, like in a shell.
 
 ### 5.6 Limitations of Mode A
 
@@ -196,6 +210,9 @@ otherwise, so a failed restore is never reported as success.
   same machine during step 6 (for example by another agent) uses T1.
 - **The GitHub CLI authorization keeps the added scope.** Later
   `gh auth refresh` runs may carry it forward.
+- **Only a literal `gh auth` command is refused.** A gh alias, a shell alias
+  or an extension that runs `gh auth ...` is not detected. If it prints or
+  changes the credentials, the guarantees in 5.2 do not hold.
 
 ### 5.7 Secret handling
 
@@ -203,6 +220,9 @@ otherwise, so a failed restore is never reported as success.
   redact the value, so they cannot leak through `fmt` or panic messages.
 - Tokens are passed to child processes only on stdin (`--with-token`) and
   read only from stdout (`gh auth token`). They never appear in argv.
+- The gh processes that gh sudo runs itself get `GH_DEBUG=false`. With
+  `GH_DEBUG=api`, gh logs the full OAuth exchange, including the token in the
+  response body. The wrapped command keeps the user's `GH_DEBUG`.
 - Tests assert that the token never appears in recorded argv or output.
 
 ## 6. Mode B: dedicated OAuth App with device flow (future work)

@@ -32,14 +32,17 @@ type fakeGH struct {
 	source      string
 	refreshable bool
 
-	refreshCode   int
-	refreshErr    error
-	loginFailures int
-	loginIgnores  bool
-	command       func(ctx context.Context, forward <-chan os.Signal, args []string) (int, error)
+	refreshCode         int
+	refreshErr          error
+	refreshFailsAfterIt bool
+	loginFailures       int
+	loginIgnores        int
+	loginSource         string
+	command             func(ctx context.Context, forward <-chan os.Signal, args []string) (int, error)
 
 	scopes             string
 	refreshEnv         []string
+	commandEnv         []string
 	calls              [][]string
 	stdins             [][]byte
 	tokenSeenByCommand string
@@ -82,7 +85,8 @@ func (f *fakeGH) Output(_ context.Context, stdin []byte, args ...string) ([]byte
 			f.loginFailures--
 			return nil, errors.New("network down")
 		}
-		if f.loginIgnores {
+		if f.loginIgnores > 0 {
+			f.loginIgnores--
 			return nil, nil
 		}
 		tok := strings.TrimSpace(string(stdin))
@@ -92,6 +96,9 @@ func (f *fakeGH) Output(_ context.Context, stdin []byte, args ...string) ([]byte
 		}
 		f.tokens[u] = tok
 		f.active = u
+		if f.loginSource != "" {
+			f.source = f.loginSource
+		}
 		return nil, nil
 	}
 	return nil, fmt.Errorf("unexpected gh call %v", args)
@@ -103,12 +110,13 @@ func (f *fakeGH) Interactive(ctx context.Context, forward <-chan os.Signal, env 
 	if slices.Equal(args[:2], []string{"auth", "refresh"}) {
 		f.refreshEnv = env
 		defer f.mu.Unlock()
-		if f.refreshErr != nil || f.refreshCode != 0 {
+		if (f.refreshErr != nil || f.refreshCode != 0) && !f.refreshFailsAfterIt {
 			return f.refreshCode, f.refreshErr
 		}
 		f.tokens[f.active] = elevToken
-		return 0, nil
+		return f.refreshCode, f.refreshErr
 	}
+	f.commandEnv = env
 	f.tokenSeenByCommand = f.tokens[f.active]
 	cmd := f.command
 	f.mu.Unlock()
@@ -153,12 +161,13 @@ func (f *fakeGH) loginCalls() int {
 }
 
 type harness struct {
-	gh      *fakeGH
-	stderr  *bytes.Buffer
-	signals chan os.Signal
-	env     map[string]string
-	locked  bool
-	runner  *Runner
+	gh          *fakeGH
+	stderr      *bytes.Buffer
+	signals     chan os.Signal
+	env         map[string]string
+	locked      bool
+	callsAtLock int
+	runner      *Runner
 }
 
 func newHarness() *harness {
@@ -178,6 +187,7 @@ func newHarness() *harness {
 				return nil, errors.New("another gh sudo is already running for github.com")
 			}
 			h.locked = true
+			h.callsAtLock = len(h.gh.calls)
 			return func() { h.locked = false }, nil
 		},
 		Sleep:           func(time.Duration) {},
@@ -249,6 +259,60 @@ func TestRunSkipsRefreshWhenScopesArePresent(t *testing.T) {
 	}
 	if n := h.gh.loginCalls(); n != 0 {
 		t.Errorf("login was called %d times, want 0", n)
+	}
+}
+
+func TestRunDisablesDebugLoggingForRefresh(t *testing.T) {
+	h := newHarness()
+	h.runner.Run(defaultOpts())
+
+	if !slices.Contains(h.gh.refreshEnv, "GH_DEBUG=false") {
+		t.Errorf("refresh env = %v, want GH_DEBUG=false", h.gh.refreshEnv)
+	}
+}
+
+func TestRunTargetsHostForCommand(t *testing.T) {
+	h := newHarness()
+	h.runner.Run(defaultOpts())
+
+	if !slices.Contains(h.gh.commandEnv, "GH_HOST="+host) {
+		t.Errorf("command env = %v, want GH_HOST=%s", h.gh.commandEnv, host)
+	}
+}
+
+func TestRunLocksBeforeInspectingTheAccount(t *testing.T) {
+	h := newHarness()
+	h.runner.Run(defaultOpts())
+
+	if h.callsAtLock != 0 {
+		t.Errorf("gh was called %d times before locking: %v", h.callsAtLock, h.gh.calls[:h.callsAtLock])
+	}
+}
+
+func TestRunRestoresWhenRefreshFailsAfterStoringTheToken(t *testing.T) {
+	h := newHarness()
+	h.gh.refreshCode = 1
+	h.gh.refreshFailsAfterIt = true
+
+	if code := h.runner.Run(defaultOpts()); code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+	h.gh.assertRestored(t)
+	if n := h.gh.loginCalls(); n != 1 {
+		t.Errorf("login was called %d times, want 1", n)
+	}
+}
+
+func TestRestoreRetriesWhenVerificationFails(t *testing.T) {
+	h := newHarness()
+	h.gh.loginIgnores = 1
+
+	if code := h.runner.Run(defaultOpts()); code != 0 {
+		t.Fatalf("exit code = %d, stderr: %s", code, h.stderr)
+	}
+	h.gh.assertRestored(t)
+	if n := h.gh.loginCalls(); n != 2 {
+		t.Errorf("login was called %d times, want 2", n)
 	}
 }
 
@@ -333,19 +397,11 @@ func TestRunRestoresOnSignalDuringCommand(t *testing.T) {
 			forwarded := make(chan os.Signal, 1)
 			h.gh.command = func(_ context.Context, forward <-chan os.Signal, _ []string) (int, error) {
 				h.signals <- sig
-				if sig == os.Interrupt {
-					select {
-					case s := <-forward:
-						t.Errorf("SIGINT was forwarded as %v", s)
-					case <-time.After(50 * time.Millisecond):
-					}
-					return 130, nil
-				}
 				select {
 				case s := <-forward:
 					forwarded <- s
 				case <-time.After(time.Second):
-					t.Error("signal was not forwarded to the command")
+					forwarded <- nil
 				}
 				return 143, nil
 			}
@@ -355,10 +411,8 @@ func TestRunRestoresOnSignalDuringCommand(t *testing.T) {
 			if code == 0 {
 				t.Error("exit code = 0, want non-zero")
 			}
-			if sig != os.Interrupt {
-				if got := <-forwarded; got != sig {
-					t.Errorf("forwarded %v, want %v", got, sig)
-				}
+			if got := <-forwarded; got != sig {
+				t.Errorf("forwarded %v, want %v", got, sig)
 			}
 			h.gh.assertRestored(t)
 		})
@@ -408,7 +462,8 @@ func TestRestoreRetriesTransientFailures(t *testing.T) {
 func TestRestoreFailureIsReported(t *testing.T) {
 	for name, setup := range map[string]func(*fakeGH){
 		"login keeps failing":   func(f *fakeGH) { f.loginFailures = 10 },
-		"verification mismatch": func(f *fakeGH) { f.loginIgnores = true },
+		"verification mismatch": func(f *fakeGH) { f.loginIgnores = 10 },
+		"plain-text fallback":   func(f *fakeGH) { f.loginSource = "oauth_token" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := newHarness()

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"slices"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -56,6 +55,33 @@ func (r *Runner) Run(opts Options) (code int) {
 		return 1
 	}
 
+	var interrupted atomic.Bool
+	forward := make(chan os.Signal, 1)
+	stopSignals := make(chan struct{})
+	defer close(stopSignals)
+	go func() {
+		for {
+			select {
+			case sig := <-r.Signals:
+				interrupted.Store(true)
+				select {
+				case forward <- sig:
+				default:
+				}
+			case <-stopSignals:
+				return
+			}
+		}
+	}()
+
+	// Not inspecting the account before locking: another gh sudo could still be running and show its elevated scopes.
+	unlock, err := r.Lock(opts.Host)
+	if err != nil {
+		r.errorf("%v", err)
+		return 1
+	}
+	defer unlock()
+
 	acct, err := r.activeAccount(ctx, opts.Host)
 	if err != nil {
 		r.errorf("%v", err)
@@ -66,35 +92,6 @@ func (r *Runner) Run(opts Options) (code int) {
 		return 1
 	}
 	user := acct.Login
-
-	unlock, err := r.Lock(opts.Host)
-	if err != nil {
-		r.errorf("%v", err)
-		return 1
-	}
-	defer unlock()
-
-	var interrupted atomic.Bool
-	forward := make(chan os.Signal, 1)
-	stopSignals := make(chan struct{})
-	defer close(stopSignals)
-	go func() {
-		for {
-			select {
-			case sig := <-r.Signals:
-				interrupted.Store(true)
-				// Not forwarding SIGINT: the terminal already delivers it to the child through the process group.
-				if sig != os.Interrupt {
-					select {
-					case forward <- sig:
-					default:
-					}
-				}
-			case <-stopSignals:
-				return
-			}
-		}
-	}()
 
 	original, err := r.token(ctx, opts.Host, user)
 	if err != nil {
@@ -121,16 +118,12 @@ func (r *Runner) Run(opts Options) (code int) {
 		return 130
 	}
 
-	if missing := missingScopes(acct.Scopes, opts.Scopes); len(missing) == 0 {
+	commandEnv := []string{"GH_HOST=" + opts.Host}
+	if len(missingScopes(acct.Scopes, opts.Scopes)) == 0 {
 		// Not refreshing anyway: it would mint another token with the same scopes as the original, and GitHub keeps only
 		// the ten newest tokens per user, app and scope set, so repeated runs could get the original token revoked.
 		r.infof("%s on %s already has scopes %s; running the command without refreshing", user, opts.Host, strings.Join(opts.Scopes, ","))
-		cmdCode, err := r.GH.Interactive(ctx, forward, nil, opts.Args...)
-		if err != nil {
-			r.errorf("could not run gh: %v", err)
-			return 1
-		}
-		return cmdCode
+		return r.runCommand(ctx, forward, commandEnv, opts.Args)
 	}
 
 	scopes := strings.Join(opts.Scopes, ",")
@@ -141,7 +134,8 @@ func (r *Runner) Run(opts Options) (code int) {
 	}
 	// Not letting gh prompt: it would offer to store the new token in a non-gh git credential helper (such as
 	// osxkeychain), where the restore could not remove it. The device flow still works; gh prints the URL to open.
-	refreshCode, err := r.GH.Interactive(ctx, forward, []string{"GH_PROMPT_DISABLED=1"}, refreshArgs...)
+	refreshEnv := append([]string{"GH_PROMPT_DISABLED=1"}, internalEnv...)
+	refreshCode, err := r.GH.Interactive(ctx, forward, refreshEnv, refreshArgs...)
 	if err != nil {
 		r.errorf("gh auth refresh failed: %v", err)
 		return 1
@@ -155,26 +149,16 @@ func (r *Runner) Run(opts Options) (code int) {
 		return 130
 	}
 
-	cmdCode, err := r.GH.Interactive(ctx, forward, nil, opts.Args...)
+	return r.runCommand(ctx, forward, commandEnv, opts.Args)
+}
+
+func (r *Runner) runCommand(ctx context.Context, forward <-chan os.Signal, env, args []string) int {
+	code, err := r.GH.Interactive(ctx, forward, env, args...)
 	if err != nil {
 		r.errorf("could not run gh: %v", err)
 		return 1
 	}
-	return cmdCode
-}
-
-func missingScopes(have string, want []string) []string {
-	var current []string
-	for s := range strings.SplitSeq(have, ",") {
-		current = append(current, strings.TrimSpace(s))
-	}
-	var missing []string
-	for _, s := range want {
-		if !slices.Contains(current, s) {
-			missing = append(missing, s)
-		}
-	}
-	return missing
+	return code
 }
 
 func (r *Runner) preflight(opts Options) error {
@@ -240,55 +224,58 @@ func (r *Runner) token(ctx context.Context, host, user string) (secret, error) {
 	return t, nil
 }
 
-func (r *Runner) restored(ctx context.Context, host, user string, original secret) (bool, error) {
+func (r *Runner) restored(ctx context.Context, host, user string, original secret) error {
 	current, err := r.token(ctx, host, user)
 	if err != nil {
-		return false, err
+		return err
 	}
 	if !current.equal(original) {
-		return false, nil
+		return errors.New("gh does not hold the original token")
 	}
 	acct, err := r.activeAccount(ctx, host)
 	if err != nil {
-		return false, err
+		return err
 	}
-	return acct.Login == user, nil
+	if acct.Login != user {
+		return fmt.Errorf("the active account is %s, not %s", acct.Login, user)
+	}
+	// Not trusting gh auth token alone: gh auth login falls back to the plain-text config file when the keyring fails.
+	if acct.TokenSource != "keyring" {
+		return fmt.Errorf("the original token is stored in %s, not in the keyring", acct.TokenSource)
+	}
+	return nil
 }
+
+const restoreAttemptTimeout = 30 * time.Second
 
 func (r *Runner) restore(host, user string, original secret) error {
 	// Not the caller's context: whatever cancelled the command must not also cancel the restore.
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
-	if ok, err := r.restored(ctx, host, user, original); err == nil && ok {
+	check := func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), restoreAttemptTimeout)
+		defer cancel()
+		return r.restored(ctx, host, user, original)
+	}
+	if check() == nil {
 		return nil
 	}
 
-	attempts := max(r.RestoreAttempts, 1)
 	var lastErr error
-	for i := range attempts {
+	for i := range max(r.RestoreAttempts, 1) {
 		if i > 0 {
 			r.Sleep(time.Duration(i) * 2 * time.Second)
 		}
+		ctx, cancel := context.WithTimeout(context.Background(), restoreAttemptTimeout)
 		_, err := r.GH.Output(ctx, []byte(original.reveal()+"\n"), "auth", "login", "-h", host, "--with-token")
-		if err == nil {
-			lastErr = nil
-			break
+		cancel()
+		if err != nil {
+			lastErr = errors.New("gh auth login --with-token failed")
+			continue
 		}
-		lastErr = errors.New("gh auth login --with-token failed")
+		if lastErr = check(); lastErr == nil {
+			return nil
+		}
 	}
-	if lastErr != nil {
-		return lastErr
-	}
-
-	ok, err := r.restored(ctx, host, user, original)
-	if err != nil {
-		return fmt.Errorf("could not verify the restore: %w", err)
-	}
-	if !ok {
-		return errors.New("the keyring does not hold the original token after the restore")
-	}
-	return nil
+	return lastErr
 }
 
 func (r *Runner) restoreFailed(host, user string, err error) {

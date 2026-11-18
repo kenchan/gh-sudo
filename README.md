@@ -78,7 +78,9 @@ gh sudo -s <scopes> [flags] -- <gh command>
       --help       Show help
 ```
 
-Everything after `--` is passed to gh unchanged. The exit status is the exit status of the command.
+Everything after `--` is passed to gh unchanged, with `GH_HOST` set to the elevated host. The exit status is the exit
+status of the command, except that a failed restore never exits with 0, and a command killed by a signal exits with
+`128 + signal`.
 
 `gh sudo` refuses to run when:
 
@@ -87,7 +89,7 @@ Everything after `--` is passed to gh unchanged. The exit status is the exit sta
 - `--user` is not the active account. `gh auth refresh` only works on the active account; switch first with
   `gh auth switch`;
 - the token is not stored in the system keyring, or is an expiring token (restoring it would drop its refresh token);
-- the command is a `gh auth` command;
+- the command is a `gh auth` command (aliases and extensions that run `gh auth` are not detected; do not wrap them);
 - another `gh sudo` is already running for the same host.
 
 ## Limitations
@@ -100,6 +102,7 @@ Everything after `--` is passed to gh unchanged. The exit status is the exit sta
 - **After Ctrl-C, wait for the `restored the original token` line.** gh does not wait for extensions on Ctrl-C, so
   your shell prompt may come back while `gh sudo` is still restoring.
 - If the account already has every requested scope, `gh sudo` runs the command without refreshing.
+- Signal handling is verified on macOS and Linux only. On Windows, signals are not forwarded to the command.
 - `SIGKILL` and power loss cannot be handled. If `gh sudo` ever reports that it failed to restore the token, run
   `gh auth login -h <host>`.
 

@@ -15,9 +15,10 @@ linters:
         - G304
   exclusions:
     rules:
+      # Not real credentials (G101) and not secret files (G306): tests use fake tokens and an executable fake gh.
       - path: _test\.go
         linters: [gosec]
-        text: G101
+        text: G101|G306
 
 formatters:
   enable:

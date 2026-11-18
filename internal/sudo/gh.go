@@ -13,12 +13,18 @@ type GH interface {
 	Interactive(ctx context.Context, forward <-chan os.Signal, env []string, args ...string) (int, error)
 }
 
+// Not inheriting GH_DEBUG: with GH_DEBUG=api, gh logs the full OAuth exchange, including the token in the response body.
+var internalEnv = []string{"GH_DEBUG=false"}
+
 type ExecGH struct {
 	Path string
 }
 
 func (g ExecGH) Output(ctx context.Context, stdin []byte, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, g.Path, args...)
+	cmd.Env = append(os.Environ(), internalEnv...)
+	// Not in the terminal's process group: a second Ctrl-C must not kill the restore and its verification.
+	isolateFromTerminalSignals(cmd)
 	cmd.Stdin = bytes.NewReader(stdin)
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
@@ -51,12 +57,8 @@ func (g ExecGH) Interactive(ctx context.Context, forward <-chan os.Signal, env [
 	err := cmd.Wait()
 	close(done)
 
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
-		if code := exitErr.ExitCode(); code >= 0 {
-			return code, nil
-		}
-		return 1, nil
+	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
+		return exitCode(exitErr), nil
 	}
 	if err != nil {
 		return 1, err
