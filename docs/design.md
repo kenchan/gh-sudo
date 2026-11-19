@@ -287,7 +287,11 @@ Open questions for Mode B:
   tagpr does not create the GitHub Release itself (`release = false`), so the
   release never exists without its binaries.
 - Other pull requests are squash-merged automatically once the CI checks that
-  the default-branch ruleset requires pass.
+  the default-branch ruleset requires pass. Such a merge is pushed with
+  `GITHUB_TOKEN` and does not start tagpr, so tagpr also runs daily at
+  12:07 JST, after Dependabot's weekly run. Release pull requests are merged
+  by hand, so tagging is not delayed. A GitHub App token would remove the
+  delay but adds a credential to manage.
 - Dependabot updates Go modules and actions weekly, grouping minor and patch
   updates per ecosystem, with a seven-day cooldown. Actions updates are left
   out of the release notes. It does not update the golangci-lint and

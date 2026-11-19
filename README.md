@@ -131,8 +131,10 @@ Pull requests other than the release pull request are squash-merged automaticall
 
 Releases are automated with [tagpr](https://github.com/Songmu/tagpr):
 
-1. Every push to `main` creates or updates a release pull request that adds a `CHANGELOG.md` entry generated from the
-   merged pull requests, and runs CI on it. Label it `tagpr:minor` or `tagpr:major` for a bigger bump than a patch
+1. Every push to `main`, and a daily run at 12:07 JST, creates or updates a release pull request that adds a
+   `CHANGELOG.md` entry generated from the merged pull requests, and runs CI on it. The daily run picks up pull requests
+   merged by auto-merge, which do not start the workflow by themselves. Run the `tagpr` workflow manually with no tag
+   to update it right away. Label it `tagpr:minor` or `tagpr:major` for a bigger bump than a patch
    release.
 2. Merging the release pull request tags the commit.
 3. The same workflow then builds the binaries for that tag and creates the GitHub release with them.
