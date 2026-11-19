@@ -1,0 +1,7 @@
+[tagpr]
+	releaseBranch = main
+	vPrefix = true
+	versionFile = -
+	release = false
+	majorLabels = major,breaking-change
+	minorLabels = minor,enhancement

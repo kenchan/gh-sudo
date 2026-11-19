@@ -125,6 +125,11 @@ go test ./...
 See [docs/design.md](docs/design.md) for the design and [docs/manual-test.md](docs/manual-test.md) for the manual test
 that covers the browser approval.
 
+Releases are made by merging the release pull request that [tagpr](https://github.com/Songmu/tagpr) keeps open. A
+merged pull request labeled `enhancement` makes the next release a minor one, and `breaking-change` a major one;
+otherwise it is a patch release. Labeling the release pull request itself with `tagpr:minor` or `tagpr:major` also
+works.
+
 ## License
 
 [MIT](LICENSE)

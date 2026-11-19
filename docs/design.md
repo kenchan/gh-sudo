@@ -279,7 +279,15 @@ Open questions for Mode B:
 
 - GitHub Actions runs `go test`, `go vet` and golangci-lint, plus actionlint
   and zizmor for the workflows.
-- Releases use `cli/gh-extension-precompile`.
+- Releases are cut with tagpr. It keeps a release pull request open, and
+  merging it tags the merged commit. The same workflow then builds and
+  publishes the binaries with `cli/gh-extension-precompile`, because a tag
+  pushed with `GITHUB_TOKEN` does not trigger other workflows. tagpr does not
+  create the GitHub Release itself (`release = false`), so the release never
+  exists without its binaries.
+- Dependabot updates Go modules and actions weekly, grouped per ecosystem,
+  with a seven-day cooldown. It does not update the golangci-lint and
+  actionlint versions in `ci.yml` or the `go` directive in `go.mod`.
 - Actions are pinned by commit SHA with the version in a comment, and
   `permissions` are minimal.
 - License: MIT.
