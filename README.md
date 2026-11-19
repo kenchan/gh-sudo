@@ -125,10 +125,28 @@ go test ./...
 See [docs/design.md](docs/design.md) for the design and [docs/manual-test.md](docs/manual-test.md) for the manual test
 that covers the browser approval.
 
-Releases are made by merging the release pull request that [tagpr](https://github.com/Songmu/tagpr) keeps open. A
-merged pull request labeled `enhancement` makes the next release a minor one, and `breaking-change` a major one;
-otherwise it is a patch release. Labeling the release pull request itself with `tagpr:minor` or `tagpr:major` also
-works.
+Pull requests other than the release pull request are squash-merged automatically once CI passes.
+
+## Releasing
+
+Releases are automated with [tagpr](https://github.com/Songmu/tagpr):
+
+1. Every push to `main` creates or updates a release pull request that adds a `CHANGELOG.md` entry generated from the
+   merged pull requests, and runs CI on it. Label it `tagpr:minor` or `tagpr:major` for a bigger bump than a patch
+   release.
+2. Merging the release pull request tags the commit.
+3. The same workflow then builds the binaries for that tag and creates the GitHub release with them.
+
+If building fails after the tag was created, run the `tagpr` workflow manually with the tag to publish it again.
+
+The release flow depends on settings that live outside the repository. Recreate them if the repository changes hands:
+
+- Settings → Actions → General → "Allow GitHub Actions to create and approve pull requests" is enabled.
+- Settings → General → "Allow auto-merge" and "Automatically delete head branches" are enabled.
+- A ruleset on the default branch requires the CI checks, with a bypass for repository admins.
+
+Release notes are generated from merged pull requests, so land changes through pull requests rather than direct pushes
+to `main`.
 
 ## License
 

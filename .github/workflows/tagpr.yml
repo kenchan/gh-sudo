@@ -3,6 +3,11 @@ name: tagpr
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to publish again (e.g. v0.1.0)
+        required: true
 
 permissions: {}
 
@@ -12,8 +17,10 @@ concurrency:
 
 jobs:
   tagpr:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
+      actions: write
       contents: write
       pull-requests: write
       issues: read
@@ -27,19 +34,35 @@ jobs:
         uses: Songmu/tagpr@047aec4b6c0ce166f52958b5a97f5a3d927fd65b # v1.22.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Not relying on pull_request: tagpr pushes with GITHUB_TOKEN, which does not trigger it, but workflow_dispatch is exempt.
+      - name: Run CI on the release pull request
+        if: steps.tagpr.outputs.pull_request != ''
+        run: gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$RELEASE_BRANCH"
+        env:
+          RELEASE_BRANCH: ${{ fromJSON(steps.tagpr.outputs.pull_request).head.ref }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   release:
     needs: tagpr
-    if: needs.tagpr.outputs.tag != ''
+    if: ${{ !cancelled() && (needs.tagpr.outputs.tag != '' || inputs.tag != '') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - id: tag
+        env:
+          TAG: ${{ needs.tagpr.outputs.tag || inputs.tag }}
+        run: |
+          if ! [[ "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::${TAG} is not a release tag"
+            exit 1
+          fi
+          echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.tagpr.outputs.tag }}
+          ref: refs/tags/${{ steps.tag.outputs.tag }}
           persist-credentials: false
       - uses: cli/gh-extension-precompile@76961aa3bd1123d0a6fd42d0a41aca0696937c39 # v2.2.0
         with:
           go_version_file: go.mod
-          release_tag: ${{ needs.tagpr.outputs.tag }}
+          release_tag: ${{ steps.tag.outputs.tag }}
