@@ -32,6 +32,12 @@ benefit, as the experiments below show.
   the token in everyday use. Recovering requires a fresh `gh auth login`.
   The notification email lists the cumulative scopes of the authorization.
   This behavior is not documented.
+- **Revoking the authorization also deletes deploy keys created with its
+  tokens** (documented), for example with `gh repo deploy-key add`. A deploy
+  key created this way disappeared after the revoke above, and a deployment
+  that depended on it failed the next day. Long-lived deploy keys should be
+  registered from the web UI.
+  ([deploy keys](https://docs.github.com/en/rest/deploy-keys/deploy-keys))
 - **The original token can be written back without a browser** with
   `gh auth login -h <host> --with-token` (token on stdin).
 - **A separate `GH_CONFIG_DIR` does not isolate credentials.** Keyring entries

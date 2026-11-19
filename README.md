@@ -55,10 +55,17 @@ detail in the [design doc](docs/design.md#11-observed-facts-gh-21040-2026-11-18)
    authorization** (observed; not documented). Not only the submitted token but also the token you use every day stopped
    working, and `gh auth login` was needed again. The notification email listed the scopes accumulated by the
    authorization, not just those of the submitted token.
-4. **Therefore `gh sudo` removes the elevated token from your machine, but not from GitHub**, just like
+4. **Revoking the GitHub CLI authorization also deletes deploy keys created with its tokens** (documented). This
+   applies to keys added through the API, for example with `gh repo deploy-key add`, and to any revocation of the
+   authorization, including sending a `gho_` token to `POST /credentials/revoke`. In the experiment, a deploy key
+   created this way disappeared, and a deployment that depended on it failed the next day. Register long-lived deploy
+   keys from the web UI instead.
+
+   Source: [REST API endpoints for deploy keys](https://docs.github.com/en/rest/deploy-keys/deploy-keys)
+5. **Therefore `gh sudo` removes the elevated token from your machine, but not from GitHub**, just like
    `gh auth refresh -r`. If you need it gone on GitHub for certain, revoke GitHub CLI under GitHub Settings →
    Applications → Authorized OAuth Apps, then run `gh auth login` again. This also revokes every other gh token for that
-   account.
+   account and deletes the deploy keys described in item 4.
 
 ## Install
 
