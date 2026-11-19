@@ -3,11 +3,13 @@ name: tagpr
 on:
   push:
     branches: [main]
+  schedule:
+    - cron: "7 3 * * *"
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing release tag to publish again (e.g. v0.1.0)
-        required: true
+        description: Existing release tag to publish again (e.g. v0.1.0). Leave empty to run tagpr.
+        required: false
 
 permissions: {}
 
@@ -17,7 +19,7 @@ concurrency:
 
 jobs:
   tagpr:
-    if: github.event_name == 'push'
+    if: ${{ !inputs.tag }}
     runs-on: ubuntu-latest
     permissions:
       actions: write
@@ -44,7 +46,8 @@ jobs:
 
   release:
     needs: tagpr
-    if: ${{ !cancelled() && (needs.tagpr.outputs.tag != '' || inputs.tag != '') }}
+    # Not on schedule: while main is still at a release PR merge, tagpr reports that release's tag again on every run.
+    if: ${{ !cancelled() && ((github.event_name == 'push' && needs.tagpr.outputs.tag != '') || inputs.tag) }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
