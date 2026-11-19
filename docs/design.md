@@ -282,11 +282,15 @@ Open questions for Mode B:
 - Releases are cut with tagpr. It keeps a release pull request open, and
   merging it tags the merged commit. The same workflow then builds and
   publishes the binaries with `cli/gh-extension-precompile`, because a tag
-  pushed with `GITHUB_TOKEN` does not trigger other workflows. tagpr does not
-  create the GitHub Release itself (`release = false`), so the release never
-  exists without its binaries.
-- Dependabot updates Go modules and actions weekly, grouped per ecosystem,
-  with a seven-day cooldown. It does not update the golangci-lint and
+  pushed with `GITHUB_TOKEN` does not trigger other workflows. For the same
+  reason it starts CI on the release pull request with `workflow_dispatch`.
+  tagpr does not create the GitHub Release itself (`release = false`), so the
+  release never exists without its binaries.
+- Other pull requests are squash-merged automatically once the CI checks that
+  the default-branch ruleset requires pass.
+- Dependabot updates Go modules and actions weekly, grouping minor and patch
+  updates per ecosystem, with a seven-day cooldown. Actions updates are left
+  out of the release notes. It does not update the golangci-lint and
   actionlint versions in `ci.yml` or the `go` directive in `go.mod`.
 - Actions are pinned by commit SHA with the version in a comment, and
   `permissions` are minimal.
