@@ -1,11 +1,6 @@
 skip-changelog:
   - changed-files:
-      - any-glob-to-all-files:
-          - ".github/**"
-          - "docs/**"
-          - "**/*_test.go"
-          - ".golangci.yml"
-          - ".gitignore"
-          - ".tagpr"
-          - "CHANGELOG.md"
-          - "README.md"
+      - all-globs-to-all-files:
+          - "!go.mod"
+          - "!go.sum"
+          - "!**/!(*_test).go"

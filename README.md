@@ -147,8 +147,8 @@ The release flow depends on settings that live outside the repository. Recreate 
 - Settings → General → "Allow auto-merge" and "Automatically delete head branches" are enabled.
 - A ruleset on the default branch requires the CI checks, with a bypass for repository admins.
 
-Pull requests that change only the development setup (workflows, docs including this README, tests, lint and tagpr
-configuration) are labeled `skip-changelog` automatically and left out of the release notes. Add the label by hand to
+Pull requests that change none of `go.mod`, `go.sum` and the non-test Go files, and so do not change the binary, are
+labeled `skip-changelog` automatically and left out of the release notes. Add the label by hand to
 leave out any other pull request.
 
 Release notes are generated from merged pull requests, so land changes through pull requests rather than direct pushes
