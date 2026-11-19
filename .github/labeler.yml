@@ -1,0 +1,6 @@
+skip-changelog:
+  - changed-files:
+      - all-globs-to-all-files:
+          - "!go.mod"
+          - "!go.sum"
+          - "!**/!(*_test).go"
