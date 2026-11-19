@@ -294,7 +294,9 @@ Open questions for Mode B:
   delay but adds a credential to manage.
 - Dependabot updates Go modules and actions weekly, grouping minor and patch
   updates per ecosystem, with a seven-day cooldown. Actions updates are left
-  out of the release notes. It does not update the golangci-lint and
+  out of the release notes, and so is any pull request that changes only the
+  development setup (labeled `skip-changelog` by actions/labeler), because
+  release notes are for people who install the extension. It does not update the golangci-lint and
   actionlint versions in `ci.yml` or the `go` directive in `go.mod`.
 - Actions are pinned by commit SHA with the version in a comment, and
   `permissions` are minimal.
