@@ -32,6 +32,8 @@ type Runner struct {
 	Lock            func(host string) (func(), error)
 	Sleep           func(time.Duration)
 	RestoreAttempts int
+
+	noRefresh []string
 }
 
 type account struct {
@@ -82,6 +84,7 @@ func (r *Runner) Run(opts Options) (code int) {
 	}
 	defer unlock()
 
+	r.noRefresh = r.noRefreshArgs(ctx)
 	acct, err := r.activeAccount(ctx, opts.Host)
 	if err != nil {
 		r.errorf("%v", err)
@@ -180,7 +183,7 @@ func (r *Runner) preflight(opts Options) error {
 }
 
 func (r *Runner) activeAccount(ctx context.Context, host string) (account, error) {
-	out, err := r.GH.Output(ctx, nil, "auth", "status", "--json", "hosts", "-h", host, "--no-refresh")
+	out, err := r.GH.Output(ctx, nil, append([]string{"auth", "status", "--json", "hosts", "-h", host}, r.noRefresh...)...)
 	var st authStatus
 	if jsonErr := json.Unmarshal(out, &st); jsonErr != nil {
 		if err != nil {
@@ -213,7 +216,7 @@ func checkAccount(a account, opts Options) error {
 }
 
 func (r *Runner) token(ctx context.Context, host, user string) (secret, error) {
-	out, err := r.GH.Output(ctx, nil, "auth", "token", "-h", host, "-u", user, "--no-refresh")
+	out, err := r.GH.Output(ctx, nil, append([]string{"auth", "token", "-h", host, "-u", user}, r.noRefresh...)...)
 	if err != nil {
 		return secret{}, errors.New("gh auth token failed")
 	}

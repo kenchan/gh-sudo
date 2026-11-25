@@ -31,6 +31,7 @@ type fakeGH struct {
 	active      string
 	source      string
 	refreshable bool
+	version     string
 
 	refreshCode         int
 	refreshErr          error
@@ -55,6 +56,7 @@ func newFakeGH() *fakeGH {
 		active:     user,
 		source:     "keyring",
 		scopes:     "gist, read:org, repo",
+		version:    "gh version 2.105.0 (2026-11-17)\nhttps://github.com/cli/cli/releases/tag/v2.105.0\n",
 	}
 }
 
@@ -67,6 +69,12 @@ func (f *fakeGH) Output(_ context.Context, stdin []byte, args ...string) ([]byte
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.record(args, stdin)
+	if slices.Equal(args, []string{"--version"}) {
+		return []byte(f.version), nil
+	}
+	if slices.Contains(args, "--no-refresh") && !supportsNoRefresh([]byte(f.version)) {
+		return nil, errors.New("unknown flag: --no-refresh")
+	}
 	switch {
 	case slices.Equal(args[:2], []string{"auth", "status"}):
 		var accts []account
@@ -153,7 +161,7 @@ func (f *fakeGH) assertNoTokenInArgv(t *testing.T) {
 func (f *fakeGH) loginCalls() int {
 	n := 0
 	for _, c := range f.calls {
-		if slices.Equal(c[:2], []string{"auth", "login"}) {
+		if isAuthCall(c, "login") {
 			n++
 		}
 	}
@@ -321,7 +329,7 @@ func TestRunPassesTokenOnlyOnStdin(t *testing.T) {
 	h.runner.Run(defaultOpts())
 
 	for i, c := range h.gh.calls {
-		if slices.Equal(c[:2], []string{"auth", "login"}) {
+		if isAuthCall(c, "login") {
 			if got := strings.TrimSpace(string(h.gh.stdins[i])); got != origToken {
 				t.Errorf("login stdin = %q, want the original token", got)
 			}
@@ -552,4 +560,54 @@ func TestSecretIsRedacted(t *testing.T) {
 	if got := fmt.Sprintf("%v", struct{ T secret }{s}); strings.Contains(got, "ORIGINAL") {
 		t.Errorf("token leaked through a struct: %s", got)
 	}
+}
+
+func TestSupportsNoRefresh(t *testing.T) {
+	tests := []struct {
+		output string
+		want   bool
+	}{
+		{"gh version 2.102.1 (2026-10-20)\nhttps://github.com/cli/cli/releases/tag/v2.102.1\n", false},
+		{"gh version 1.200.0 (2020-01-01)\n", false},
+		{"gh version 2.103.0 (2026-10-21)\n", true},
+		{"gh version 2.105.0 (2026-11-17)\n", true},
+		{"gh version 3.0.0 (2027-01-01)\n", true},
+		{"gh version DEV\n", true},
+		{"", true},
+	}
+	for _, tt := range tests {
+		if got := supportsNoRefresh([]byte(tt.output)); got != tt.want {
+			t.Errorf("supportsNoRefresh(%q) = %v, want %v", tt.output, got, tt.want)
+		}
+	}
+}
+
+func TestRunPassesNoRefreshOnlyToGhThatSupportsIt(t *testing.T) {
+	tests := []struct {
+		version string
+		want    bool
+	}{
+		{"gh version 2.102.1 (2026-10-20)\n", false},
+		{"gh version 2.105.0 (2026-11-17)\n", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.version, func(t *testing.T) {
+			h := newHarness()
+			h.gh.version = tt.version
+
+			if code := h.runner.Run(defaultOpts()); code != 0 {
+				t.Fatalf("exit code = %d, stderr: %s", code, h.stderr)
+			}
+			h.gh.assertRestored(t)
+			for _, c := range h.gh.calls {
+				if (isAuthCall(c, "status") || isAuthCall(c, "token")) && slices.Contains(c, "--no-refresh") != tt.want {
+					t.Errorf("%v: --no-refresh present = %v, want %v", c, !tt.want, tt.want)
+				}
+			}
+		})
+	}
+}
+
+func isAuthCall(args []string, sub string) bool {
+	return len(args) > 1 && args[0] == "auth" && args[1] == sub
 }
