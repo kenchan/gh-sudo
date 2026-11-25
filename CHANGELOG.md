@@ -1,5 +1,7 @@
 # Changelog
 
+## [v0.1.2](https://github.com/kenchan/gh-sudo/compare/v0.1.1...v0.1.2) - 2026-11-25
+
 ## [v0.1.1](https://github.com/kenchan/gh-sudo/compare/v0.1.0...v0.1.1) - 2026-11-25
 
 - Bump golang.org/x/sys from 0.49.0 to 0.50.0 in the go-minor-and-patch group by @dependabot[bot] in https://github.com/kenchan/gh-sudo/pull/4
