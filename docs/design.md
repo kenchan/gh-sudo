@@ -68,6 +68,12 @@ benefit, as the experiments below show.
   extension keeps running.
 - `gh auth status --json hosts --no-refresh` reports, per account, `active`,
   `login`, `tokenSource` and `refreshable`, without printing the token.
+- `--no-refresh` on `gh auth status` and `gh auth token` arrived in v2.103.0
+  together with expiring tokens; older gh rejects it as an unknown flag, and
+  never refreshes a token anyway. gh does not tell an extension its version
+  (it only sets `GH_EXTENSION` and `GH_PATH`), so `gh sudo` runs
+  `gh --version` once and passes `--no-refresh` only to v2.103.0 or later, or
+  to a gh whose version it cannot parse.
 
 ## 2. Goals
 

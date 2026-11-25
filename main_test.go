@@ -18,6 +18,7 @@ const fakeGH = `#!/bin/sh
 D="$FAKE_DIR"
 echo "$* GH_DEBUG=$GH_DEBUG" >> "$D/calls"
 case "$1 $2" in
+"--version ") echo "gh version 2.105.0 (2026-11-17)";;
 "auth status")
   printf '{"hosts":{"github.com":[{"state":"success","active":true,"host":"github.com","login":"octo","tokenSource":"keyring","scopes":"gist, read:org, repo","gitProtocol":"https"}]}}\n';;
 "auth token") cat "$D/token";;
