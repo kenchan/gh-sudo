@@ -22,7 +22,6 @@ jobs:
     if: ${{ !inputs.tag }}
     runs-on: ubuntu-latest
     permissions:
-      actions: write
       contents: write
       pull-requests: write
       issues: read
@@ -36,13 +35,6 @@ jobs:
         uses: Songmu/tagpr@047aec4b6c0ce166f52958b5a97f5a3d927fd65b # v1.22.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      # Not relying on pull_request: tagpr pushes with GITHUB_TOKEN, which does not trigger it, but workflow_dispatch is exempt.
-      - name: Run CI on the release pull request
-        if: steps.tagpr.outputs.pull_request != ''
-        run: gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$RELEASE_BRANCH"
-        env:
-          RELEASE_BRANCH: ${{ fromJSON(steps.tagpr.outputs.pull_request).head.ref }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   release:
     needs: tagpr

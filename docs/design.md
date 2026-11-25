@@ -289,7 +289,10 @@ Open questions for Mode B:
   merging it tags the merged commit. The same workflow then builds and
   publishes the binaries with `cli/gh-extension-precompile`, because a tag
   pushed with `GITHUB_TOKEN` does not trigger other workflows. For the same
-  reason it starts CI on the release pull request with `workflow_dispatch`.
+  reason CI on the release pull request waits for a maintainer to approve the
+  run in the Actions tab, as tagpr documents; starting it with
+  `workflow_dispatch` instead meant dispatching to a deleted branch after the
+  release pull request was merged.
   tagpr does not create the GitHub Release itself (`release = false`), so the
   release never exists without its binaries.
 - Other pull requests are squash-merged automatically once the CI checks that
